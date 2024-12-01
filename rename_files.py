@@ -66,6 +66,28 @@ async def rename_file(file_path, new_file_name):
     return new_file_name
 
 
+async def sanitize_filename(suggested_name, original_ext):
+    # Remove backticks completely
+    suggested_name = suggested_name.replace('`', '')
+    suggested_name = suggested_name.replace("'", "")
+    # Remove forbidden characters
+    forbidden_chars = r'[<>/\\\|\?\*\:\"\+\%\!\@]'
+    suggested_name = re.sub(forbidden_chars, "_", suggested_name)
+    # Normalize spacing and replace with hyphens
+    suggested_name = re.sub(r"\s+", "-", suggested_name)
+    suggested_name = re.sub(r"-{2,}", "-", suggested_name)
+    # Ensure name doesn't start with numbers or non-alphabetic characters
+    suggested_name = re.sub(r"^[^a-zA-Z]+", "", suggested_name)
+    # Ensure name doesn't end with non-alphabetic or non-numeric characters
+    suggested_name = re.sub(r"[^a-zA-Z0-9]+$", "", suggested_name)
+    # If name is empty after cleaning, use a default
+    if not suggested_name:
+        suggested_name = f"untitled-document"
+    # Combine with original extension
+    suggested_name = f"{suggested_name}{original_ext}"
+    return suggested_name
+
+
 async def analyze_content_and_rename(file_path, filename, old_files_dir):
     # Verify file exists before processing
     if not os.path.exists(file_path):
@@ -116,23 +138,8 @@ async def analyze_content_and_rename(file_path, filename, old_files_dir):
 
     # Extract original file extension and remove it from suggested name
     original_name, original_ext = os.path.splitext(filename)
-    # Remove any existing extensions from suggested name
     suggested_name = re.sub(r"\.\w+$", "", suggested_name)
-    suggested_name = f"{suggested_name}{original_ext}"
-
-    # Enhanced validation and fixing
-    forbidden_chars = r'[<>/\\\|\?\*\:\"\+\%\!\@]'
-    suggested_name = re.sub(forbidden_chars, "_", suggested_name)
-    suggested_name = suggested_name.strip()
-    suggested_name = re.sub(r"\s+", "-", suggested_name)
-    suggested_name = re.sub(r"-{2,}", "-", suggested_name)
-    suggested_name = re.sub(r"^-+", "", suggested_name)
-    suggested_name = re.sub(r"-+$", "", suggested_name)
-    suggested_name = suggested_name.strip('`')
-
-    if not suggested_name:
-        suggested_name = f"untitled_{os.path.splitext(filename)[0]}"
-
+    suggested_name = await sanitize_filename(suggested_name, original_ext)
     try:
         # Verify file exists before renaming
         if not os.path.exists(file_path):
