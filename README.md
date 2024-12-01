@@ -1,85 +1,70 @@
 # 🤖 Ollama File Renamer
 
-## Overview
+Effortlessly rename files using local AI - No tokens, No API, No cost!
 
-Automate intelligent file renaming using AI-powered content analysis with Ollama (local LLM).
+## ✨ What is This?
 
-## 📝 Description
+A dead-simple Python script that uses Ollama to automatically rename your files based on their content. Perfect for developers, writers, and anyone drowning in messy file names.
 
-A Python script that leverages AI (Ollama) to automatically rename files based on their content, transforming generic filenames into descriptive, meaningful names. Ideal for developers, writers, and knowledge workers managing large document collections.
+## 🚀 Why Use This?
 
-## Features
+- **Free:** 100% local AI, no external services
+- **Simple:** Just run `python rename_files.py path\to\folder`
+- **Smart:** AI understands your file content
+- **Safe:** Original files saved in `after-rename-to-delete/` directory
+- **Fast:** Works with hundreds of files quickly-ish
 
-- 🧠 **AI-Powered Naming**: Uses Ollama's language models to generate intelligent, context-aware filenames
-- 🔍 **Content Analysis**: Reads file content to suggest appropriate, descriptive names
-- 📂 **Batch Processing**: Handles renaming multiple files in a single operation
-- 🛡️ **Robust Error Handling**: Gracefully manages file system complexities
-- 🚦 **Flexible Modes**: Supports both sequential and parallel renaming
-- 🗄️ **Preservation**: Moves original files to an "old" directory for backup
-
-## Use Cases
-
-- Many "new 512.txt" files
-- Software development project file management
-- Research document organization
-- Code repository cleanup
-- Technical documentation standardization
-
-## Prerequisites
+## 🔧 Requirements
 
 - Python 3.8+
-- Ollama
-- Ollama model (qwen2.5-coder:7b, llama 3.2, etc)
+- [Ollama](https://ollama.com/) (Free, local AI)
 
-## Installation
+## 💾 Installation
 
 ```bash
-git clone git@github.com:octrow/ollama-rename-files.git
+# Clone the repository
+git clone https://github.com/octrow/ollama-rename-files.git
 cd ollama-rename-files
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Pull a small language model
+ollama pull qwen2.5-coder:7b
 ```
 
-## Usage
+## 🖥️ Usage
 
-### Basic Renaming (recommend for ordinary PC)
 ```bash
-python rename_files.py "/path/to/your/directory"
+# Rename files in current directory
+python rename_files.py
+
+# Rename files in specific directory
+python rename_files.py "C:\path\to\your\folder"
 ```
 
-### Parallel Processing
-```bash
-python rename_files.py "/path/to/your/directory" -p 10
-```
+## 🤔 How It Works
 
-## Configuration
+1. Finds files starting with "новый" and ending with ".txt"
+2. Uses local Ollama AI to read file content
+3. Generates a smart, descriptive filename
+4. Renames the file
+5. Moves original file to `after-rename-to-delete/` folder
+6. Logs every single action
 
-- Customize renaming patterns
-- Modify AI model selection
-- Adjust logging preferences
+## 📋 Naming Convention
 
-## Example
+Creates filenames like:
+- `task-fix-backend-resolve-database-connection-issue.txt`
+- `doc-update-project-architecture-notes.md`
 
-Before:
-- `new 125.txt`
+## 🛡️ What's Protected?
 
-After:
-- `issue-fix-backend-data-processing-optimization.txt`
+- Original files are never deleted
+- Comprehensive logging
+- Error-resistant design
+- Works with hundreds of files
 
-## 🤖 How It Works
+## 🤝 Contributing
 
-1. Scans files matching a pattern (e.g., "новый *.txt")
-2. Uses Ollama AI to analyze file content
-3. Generates a descriptive filename
-4. Renames file and archives original
-
-## 🔍 Naming Convention
-
-`<Type> - <Action> - <Component> - <Short Description>.<Extension>`
-
-- **Type:** task, issue, doc, snippet, review, idea
-- **Action:** create, fix, update, review, discuss, complete
-- **Component:** backend, frontend, database, etc.
-
-## 🌟 Contributing
-
-Contributions welcome! Easy :)
+Found a bug? Want a feature? Pull requests are welcome!
