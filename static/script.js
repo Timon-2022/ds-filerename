@@ -21,23 +21,44 @@ document.getElementById('set-dir-btn').addEventListener('click', async () => {
     }
 });
 
-document.getElementById('choose-dir-btn').addEventListener('click', async () => { // New button
+async function chooseDirectory() {
+    return new Promise((resolve, reject) => {
+      pywebview.api.chooseDirectory().then(resolve).catch(reject);
+    });
+  }
+
+document.getElementById('choose-dir-btn').addEventListener('click', async () => {
     try {
-        const response = await fetch('/choose_directory', { method: 'POST' });
-        if (!response.ok) {
-            const errorData = await response.json();
-            alert(`Error choosing directory: ${errorData.error}`);
+        const directory = await chooseDirectory(); // Call the function to choose the dir
+
+        if (directory) {
+          const response = await fetch('/set_directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ directory })
+          });
+
+          if (!response.ok) {
+              const errorData = await response.json();
+              alert(`Error setting directory: ${errorData.error}`);
+          } else {
+              const result = await response.json();
+              document.getElementById('directory').value = result.directory; // Update display
+              alert(result.message);
+              fetchPatterns();
+          }
         } else {
-            const result = await response.json();
-            document.getElementById('directory').value = result.directory; // Update display
-            alert(result.message);
-            fetchPatterns();
+          alert('No directory selected.'); // Handle cancellation
         }
 
     } catch (error) {
-        alert(`Error choosing directory: ${error}`);
+        alert(`Error: ${error}`); // Generic error handling
     }
+
+
+
 });
+
 
 
 async function fetchPatterns() {

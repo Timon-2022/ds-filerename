@@ -17,6 +17,12 @@
         <button id="rename-btn">Rename Files</button>
         <div id="results"></div>
     </div>
+    <script>
+    window.addEventListener('pywebviewready', () => {  // Use pywebviewready
+      console.log("pywebview is ready!"); // Log to console when ready
+      // Now you can safely call pywebview.api functions
+    });
+    </script>
     <script src="/static/script.js"></script>
 </body>
 </html>

@@ -14,18 +14,6 @@ def create_app():
     def index():
         return render_template("index.html")  # Render the main GUI HTML file
 
-    @app.route('/choose_directory', methods=['POST'])
-    def choose_directory():
-        result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG)  # Access the window
-        if result and len(result) > 0:
-            directory = Path(result[0])  # Use Path
-            if directory.is_dir():
-                renamer.base_dir = directory  # Update renamer base_dir
-                return jsonify({'directory': str(directory), 'message': 'Directory selected successfully.'})
-            else:
-                return jsonify({'error': 'Selected path is not a directory.'}), 400
-        return jsonify({'error': 'No directory selected.'}), 400  # Proper error handling
-
     @app.route('/set_directory', methods=['POST'])
     def set_directory():
         data = request.json
