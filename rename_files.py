@@ -1,291 +1,422 @@
 import os
 import re
 import shutil
+import asyncio
+import sys
+import json
+import subprocess
+import uuid
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Union
 
-from ollama import AsyncClient
+from ollama import AsyncClient, Client
 import logging
 import argparse
-import sys
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout)  # Ensure real-time logging
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
 
 
-async def create_old_files_directory(directory):
-    old_files_dir = os.path.join(directory, "after-rename-to-delete")
-    os.makedirs(old_files_dir, exist_ok=True)
-    return old_files_dir
+class InteractiveFileRenamer:
+    def __init__(
+            self,
+            base_dir: Union[str, Path] = None,
+            auto_mode: bool = False,
+            model_name: str = "qwen2.5-coder:7b",
+            context_length: int = 2048,
+            filename_prefix: str = "new",
+            filename_extension: str = ".txt",
+            max_file_name_length: int = 128,
+            backup_dir: Union[str, Path] = None,
+    ):
 
+        self.base_dir: Path | None = Path(base_dir) if base_dir else None
+        self.auto_mode: bool = auto_mode
+        self.model_name: str = model_name
+        self.context_length: int = context_length
+        self.filename_prefix: str = filename_prefix
+        self.filename_extension: str = filename_extension
+        self.max_file_name_length: int = max_file_name_length
+        self.backup_dir: Path = backup_dir
+        self.ollama_client: Client = Client()
 
-async def move_to_old_files_directory(old_files_dir, file_path, filename):
-    # Check if file still exists
-    if not os.path.exists(file_path):
-        logger.warning(f"File {file_path} no longer exists. Skipping move.")
-        return None
-    # Handle potential filename conflicts
-    counter = 1
-    new_file_path = os.path.join(old_files_dir, filename)
-    base_name, ext = os.path.splitext(filename)
+    def create_backup_directory(self, base_dir: Path) -> Path:
+        """
+        Create a backup directory within the base directory.
+        Ensures unique backup folder names using timestamp or incremental numbering.
+        """
+        backup_dir = os.path.join(base_dir, f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(backup_dir, exist_ok=True)
+        return Path(backup_dir)
 
-    while os.path.exists(new_file_path):
-        new_filename = f"{base_name}_{counter}{ext}"
-        new_file_path = os.path.join(old_files_dir, new_filename)
-        counter += 1
+    @staticmethod
+    def backup_file(
+            file_path: Path,
+            backup_dir: Path
+    ) -> bool:
+        """
+        Copy a file to the backup directory before renaming.
+        Preserves original filename in the backup.
+        """
+        try:
+            shutil.copy2(file_path, backup_dir)
+            return True
+        except Exception as e:
+            logger.error(f"Backup failed for {file_path}: {e}")
+            return False
 
-    try:
-        shutil.move(file_path, new_file_path)
-        return new_file_path
-    except Exception as e:
-        logger.error(f"Error moving file {file_path}: {e}")
-        return None
+    def _discover_file_patterns(self) -> list[tuple[tuple[str, str], int]]:
+        """Discover potential file patterns in the directory."""
+        if not self.base_dir or not os.path.isdir(self.base_dir):
+            raise ValueError("Invalid directory")
+        patterns = Counter()
+        for filename in os.listdir(self.base_dir):
+            if os.path.isfile(os.path.join(self.base_dir, filename)):
+                prefix_match = re.match(r"^([^.\w]{1,5}|\w{1,5})", filename)
+                if prefix_match:
+                    prefix = prefix_match.group(1)
+                    ext = os.path.splitext(filename)[1].lower()
+                    patterns[(prefix, ext)] += 1
+        return patterns.most_common(5)
 
+    def _interactive_directory_selection(self) -> Path:
+        """Interactively select the directory for file renaming."""
+        while True:
+            dir_path_str = input("Enter the directory path (press Enter for current directory): ").strip()
+            dir_path = Path(dir_path_str) if dir_path_str else Path.cwd()
+            if dir_path.is_dir():
+                return dir_path
+            else:
+                print(f"Error: '{dir_path}' is not a valid directory. Please try again.")
 
-async def rename_file(file_path, new_file_name):
-    # Check if file still exists
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File {file_path} no longer exists")
-    directory = os.path.dirname(file_path)
-    new_file_path = os.path.join(directory, new_file_name)
+    def _interactive_file_pattern_selection(
+            self,
+            patterns: list[tuple[tuple[Any, str], int]]
+    ) -> tuple[str, str]:
+        """Interactively select file patterns for renaming."""
+        print("\nChoose pattern of names for renaming:")
+        for i, ((prefix, ext), count) in enumerate(patterns, 1):
+            print(f"{i}. `{prefix}` - {count} files, {ext[1:]}")
+        print(f"{len(patterns) + 1}. Write your pattern")
+        while True:
+            try:
+                choice = input('Press number of chosen variant: ').strip()
+                if not choice:
+                    if patterns:
+                        return patterns[0][0]
+                    else:
+                        return "new", ".txt"
+                choice = int(choice)
+                if 1 <= choice <= len(patterns):
+                    return patterns[choice - 1][0]
+                elif choice == len(patterns) + 1:
+                    prefix = input('Enter file prefix: ').strip()
+                    ext = input('Enter file extension (with dot): ').strip().lower()
+                    return prefix, ext
+                else:
+                    print('Invalid selection. Please try again.')
+            except ValueError:
+                print('Please enter a valid number.')
 
-    # Additional checks to prevent overwriting existing files
-    counter = 1
-    base_name, ext = os.path.splitext(new_file_name)
-    while os.path.exists(new_file_path):
-        new_file_name = f"{base_name}_{counter}{ext}"
-        new_file_path = os.path.join(directory, new_file_name)
-        counter += 1
+    def _get_available_ollama_models(self) -> list[str]:
+        """Retrieve available Ollama models."""
+        try:
+            result = subprocess.run(
+                ['curl', 'http://localhost:11434/api/tags'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            models_data = json.loads(result.stdout)
+            return [model['name'] for model in models_data.get('models', [])]
+        except Exception as e:
+            print(f"Error retrieving Ollama models: {e}")
+            return []
 
-    os.rename(file_path, new_file_path)
-    return new_file_name
+    def _interactive_model_selection(
+            self,
+            available_models: list[str]
+    ) -> str:
+        """Interactively select an Ollama model for renaming."""
+        if not available_models:
+            print("No Ollama models found. Using default model.")
+            return 'qwen2.5-coder:7b'
+        print("\nAvailable Ollama models:")
+        for i, model in enumerate(available_models, 1):
+            logger.info(f"{i}. {model}")
+        print(f"{len(available_models) + 1}. Enter custom model name")
 
+        while True:
+            try:
+                choice = input("Select model number (or press Enter for first model): ").strip()
+                if not choice:
+                    return available_models[0]
+                choice = int(choice)
+                if 1 <= choice <= len(available_models):
+                    return available_models[choice - 1]
+                elif choice == len(available_models) + 1:
+                    return input("Enter full model name: ").strip()
+                else:
+                    print("Invalid selection. Please try again.")
+            except ValueError:
+                print("Please enter a valid number.")
 
-async def sanitize_filename(suggested_name, original_ext):
-    # Remove backticks completely
-    suggested_name = suggested_name.replace('`', '')
-    suggested_name = suggested_name.replace("'", "")
-    # Remove forbidden characters
-    forbidden_chars = r'[<>/\\\|\?\*\:\"\+\%\!\@]'
-    suggested_name = re.sub(forbidden_chars, "_", suggested_name)
-    # Normalize spacing and replace with hyphens
-    suggested_name = re.sub(r"\s+", "-", suggested_name)
-    suggested_name = re.sub(r"-{2,}", "-", suggested_name)
-    # Ensure name doesn't start with numbers or non-alphabetic characters
-    suggested_name = re.sub(r"^[^a-zA-Z]+", "", suggested_name)
-    # Ensure name doesn't end with non-alphabetic or non-numeric characters
-    suggested_name = re.sub(r"[^a-zA-Z0-9]+$", "", suggested_name)
-    # If name is empty after cleaning, use a default
-    if not suggested_name:
-        suggested_name = f"untitled-document"
-    # Combine with original extension
-    suggested_name = f"{suggested_name}{original_ext}"
-    return suggested_name
+    def _get_model_max_context(
+            self,
+            model_name: str
+    ) -> int:
+        """Get the maximum context length for a given model."""
+        try:
+            model_info = self.ollama_client.show(model_name)
+            if model_info and model_info.modelinfo:
+                context_length = None
+                for key, value in model_info.modelinfo.items():
+                    if key.endswith(".context_length"):
+                        context_length = int(value)
+                        break
+                if context_length:
+                    print(f"Current context length for {model_name} is: {context_length}")
+                    return context_length
+            print(f"Could not determine context length for {model_name} (key not found)")
+            return 2048
+        except Exception as e:
+            print(f"Could not retrieve model info: {e}")
+            return 2048
 
+    def interactive_configuration(self) -> None:
+        """Orchestrate interactive configuration."""
+        if self.auto_mode:
+            return
+        self.base_dir = self._interactive_directory_selection()
+        patterns = self._discover_file_patterns()
+        self.filename_prefix, self.filename_extension = self._interactive_file_pattern_selection(patterns)
+        available_models = self._get_available_ollama_models()
+        self.model_name = self._interactive_model_selection(available_models)
+        max_context = self._get_model_max_context(self.model_name)
+        while True:
+            context_choice = input(
+                f"\nModel max context: {max_context} characters. Enter custom length, `500` will work (or press Enter for max): ").strip()
+            if not context_choice:
+                self.context_length = max_context
+                break
+            elif context_choice.isdigit() and int(context_choice) <= max_context:
+                self.context_length = int(context_choice)
+                break
+            else:
+                print(f"Invalid context length. Please enter a number less than or equal to {max_context}.")
+        print("\n--- Configuration Summary ---")
+        print(f"Directory: {self.base_dir}")
+        print(f"File Pattern: '{self.filename_prefix}*{self.filename_extension}'")
+        print(f"Model: {self.model_name}")
+        print(f"Context Length: {self.context_length} characters")
 
-async def analyze_content_and_rename(file_path, filename, old_files_dir):
-    # Verify file exists before processing
-    if not os.path.exists(file_path):
-        logger.warning(f"File {file_path} no longer exists.")
-        return 0, filename, "File does not exist"
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read(500)
-    except Exception as e:
-        logger.error(f"Error reading file {filename}: {e}")
-        return 0, filename, str(e)
+    def _sanitize_filename(
+            self,
+            suggested_name: str,
+            original_ext: str
+    ) -> str:
+        suggested_name = suggested_name.replace('.', '')
+        suggested_name = suggested_name.replace('`', '').replace("'", "")
+        forbidden_chars = r'[<>/\\\|\?\*\:\"\+\%\!\@]'
+        suggested_name = re.sub(forbidden_chars, "_", suggested_name)
+        suggested_name = re.sub(r"\s+", "-", suggested_name)
+        suggested_name = re.sub(r"-{2,}", "-", suggested_name)
+        suggested_name = re.sub(r"^[^a-zA-Z]+", "", suggested_name)
+        suggested_name = re.sub(r"[^a-zA-Z0-9]+$", "", suggested_name)
+        if not suggested_name:
+            suggested_name = f"untitled-document {uuid.uuid4()}"
+        suggested_name = f"{suggested_name}{original_ext}"
+        return suggested_name
 
-    prompt = f"""
-    The following text is from a file in a software development project:
+    async def analyze_and_rename(
+            self,
+            file_path: Path,
+            filename: str
+    ) -> tuple[bool, str, str]:
+        if self.backup_dir is None:
+            self.backup_dir = self.create_backup_directory(self.base_dir)
 
-    ```
-    {content}
-    ```
-
-    Suggest a file name using the following pattern:
-
-    `<Type> - <Action> - <Component> - <Short Description>.<Extension>`
-
-    Where:
-
-    * **Type:**  task, issue, doc, snippet, review, idea
-    * **Action:** create, fix, update, review, discuss, complete
-    * **Component:** backend, frontend, database, api, auth, testing, or a more specific component name
-    * **Short Description:** A concise summary of the file's content.
-    * **Extension:** Based on the content (e.g., .md, .txt, .py). If unsure, use .md
-
-    Provide only the file name as output, maximum 128 characters, lowercase. 
-    """
-
-    try:
-        client = AsyncClient()
-        response = await client.generate(
-            "qwen2.5-coder:7b",  # Updated model
-            prompt,
-            options={
-                "num_predict": 128,  # Limit output length
-            }
-        )
-        suggested_name = response["response"].strip().lower()
-    except Exception as e:
-        logger.error(f"Error generating new filename for {filename}: {e}")
-        return 0, filename, str(e)
-
-    # Extract original file extension and remove it from suggested name
-    original_name, original_ext = os.path.splitext(filename)
-    suggested_name = re.sub(r"\.\w+$", "", suggested_name)
-    suggested_name = await sanitize_filename(suggested_name, original_ext)
-    try:
-        # Verify file exists before renaming
+        backup_success = self.backup_file(file_path, self.backup_dir)
+        if not backup_success:
+            logger.warning(f"Could not backup {filename} before renaming")
+            return False, filename, "Backup failed"
         if not os.path.exists(file_path):
-            logger.warning(f"File {file_path} disappeared before renaming.")
-            return 0, filename, "File disappeared"
-        new_filename = await rename_file(file_path, suggested_name)
-        # Move original file to old files directory
-        await move_to_old_files_directory(old_files_dir, file_path, filename)
-        return 1, new_filename, "Success"
-    except Exception as e:
-        logger.error(f"Error renaming {filename}: {e}")
-        return 0, filename, str(e)
+            print(f"File {file_path} no longer exists.")
+            return False, filename, "File does not exist"
 
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read(self.context_length)  # Use specified context length
+        except Exception as e:
+            print(f"Error reading file {filename}: {e}")
+            return False, filename, str(e)
 
-async def collect_files_to_rename(directory):
-    files_to_rename = [
-        os.path.join(directory, f)
-        for f in os.listdir(directory)
-        if f.startswith("новый") and f.endswith(".txt")
-    ]
-    # Verify files exist
-    files_to_rename = [f for f in files_to_rename if os.path.exists(f)]
-    return files_to_rename
+        prompt = f"""
+                        The following text is from a file in a software development project:
+    
+                        ```
+                        {content}
+                        ```
+    
+                        Suggest a file name using the following pattern:
+    
+                        `<Type> - <Action> - <Component> - <Short Description>.<Extension>`
+    
+                        Where:
+                        * **Type:**  task, issue, doc, snippet, review, idea
+                        * **Action:** create, fix, update, review, discuss, complete
+                        * **Component:** backend, frontend, database, api, auth, testing, or a more specific component name
+                        * **Short Description:** A concise summary of the file's content.
+                        * **Extension:** Based on the content (e.g., .md, .txt, .py). If unsure, use .md
+    
+                        Provide only the file name as output, maximum 128 characters, lowercase. 
+                        """
 
+        try:
+            client = AsyncClient()
+            response = await client.generate(
+                self.model_name,
+                prompt,
+                options={
+                    "num_predict": self.max_file_name_length,
+                }
+            )
+            suggested_name = response["response"].strip().lower()
+        except Exception as e:
+            print(f"Error generating new filename for {filename}: {e}")
+            return False, filename, str(e)
+        original_ext = os.path.splitext(filename)[1]
+        suggested_name = re.sub(r"\.\w+$", "", suggested_name)
+        new_filename = self._sanitize_filename(suggested_name, original_ext)
+        try:
+            new_file_path = self.base_dir / new_filename
+            os.rename(file_path, new_file_path)
+            print(f"Renamed: {filename} -> {new_filename}")
+            return True, new_filename, "Success"
+        except Exception as e:
+            print(f"Error renaming {filename}: {e}")
+            return False, filename, str(e)
 
-async def sequential_rename(files_to_rename, directory):
-    # Create old files directory
-    old_files_dir = await create_old_files_directory(directory)
+    def collect_files_to_rename(self) -> list[Path]:
+        return [
+            file_path
+            for file_path in self.base_dir.iterdir()
+            if file_path.name.startswith(self.filename_prefix) and file_path.name.endswith(self.filename_extension)
+        ]
 
-    total_files = len(files_to_rename)
-    renamed_count = 0
-    failed_count = 0
-    failed_files = []
+    async def _sequential_rename(
+            self,
+            files_to_rename: list[Path]
+    ) -> tuple[int, int, list[tuple[str, str]]]:
+        renamed_count = 0
+        failed_count = 0
+        failed_files = []
+        for i, file_path in enumerate(files_to_rename, 1):
+            filename = os.path.basename(file_path)
+            success, result_filename, message = await self.analyze_and_rename(file_path,
+                                                                              filename)  # TODO: fix Expected type 'Path', got 'str' instead
+            if success:
+                renamed_count += 1
+            else:
+                failed_count += 1
+                failed_files.append((filename, message))
+            if i % 10 == 0 or i == len(files_to_rename):
+                print(f"Progress: {renamed_count} renamed, {failed_count} failed")
+        return renamed_count, failed_count, failed_files
 
-    for i, filename in enumerate(files_to_rename, 1):
-        file_path = os.path.join(directory, filename)
-        success, result_filename, message = await analyze_content_and_rename(file_path, filename, old_files_dir)
+    async def _parallel_rename(
+            self,
+            files_to_rename: list[Path],
+            parallel_count: int
+    ) -> tuple[int, int, list[tuple[str, str]]]:
+        semaphore = asyncio.Semaphore(parallel_count)
 
-        if success:
-            renamed_count += 1
-            logger.info(f"[{i}/{total_files}] Renamed: {filename} -> {result_filename}")
+        async def rename_with_semaphore(file_path: Path):
+            async with semaphore:
+                filename = os.path.basename(file_path)
+                return await self.analyze_and_rename(file_path, filename)
+
+        results = await asyncio.gather(*[rename_with_semaphore(file_path) for file_path in files_to_rename])
+        renamed_count = sum(1 for success, _, _ in results if success)
+        failed_count = sum(1 for success, _, _ in results if not success)
+        failed_files = [(filename, message) for success, filename, message in zip(
+            [r[0] for r in results],
+            [os.path.basename(f) for f in files_to_rename],
+            [r[2] for r in results]
+        ) if not success]
+        return renamed_count, failed_count, failed_files
+
+    async def rename_files(
+            self,
+            parallel_count: int = 0
+    ) -> tuple[int, int, list[tuple[str, str]]]:
+        files_to_rename = self.collect_files_to_rename()
+        if not files_to_rename:
+            print("No files found to rename.")
+            return 0, 0, []
+        print(f"Found {len(files_to_rename)} files to rename")
+        if parallel_count > 0:
+            return await self._parallel_rename(files_to_rename, parallel_count)
         else:
-            failed_count += 1
-            failed_files.append((filename, message))
-            logger.warning(f"[{i}/{total_files}] Failed: {filename} - {message}")
-
-        # Periodic progress update
-        if i % 10 == 0 or i == total_files:
-            logger.info(f"Progress: {renamed_count} renamed, {failed_count} failed")
-
-    return renamed_count, failed_count, failed_files
-
-
-async def parallel_rename(files_to_rename, directory, parallel_count):
-    # Create old files directory
-    old_files_dir = await create_old_files_directory(directory)
-
-    total_files = len(files_to_rename)
-    semaphore = asyncio.Semaphore(parallel_count)
-
-    async def rename_with_semaphore(file_path, filename):
-        async with semaphore:
-            return await analyze_content_and_rename(file_path, filename, old_files_dir)
-
-    # Prepare rename tasks
-    rename_tasks = []
-    for filename in files_to_rename:
-        file_path = os.path.join(directory, filename)
-        rename_tasks.append(rename_with_semaphore(file_path, filename))
-
-    # Run tasks and collect results
-    results = await asyncio.gather(*rename_tasks)
-
-    renamed_count = 0
-    failed_count = 0
-    failed_files = []
-
-    for i, (success, result_filename, message) in enumerate(results, 1):
-        if success:
-            renamed_count += 1
-            logger.info(f"[{i}/{total_files}] Renamed: {result_filename}")
-        else:
-            failed_count += 1
-            failed_files.append((result_filename, message))
-            logger.warning(f"[{i}/{total_files}] Failed: {result_filename} - {message}")
-
-        # Periodic progress update
-        if i % 10 == 0 or i == total_files:
-            logger.info(f"Progress: {renamed_count} renamed, {failed_count} failed")
-
-    return renamed_count, failed_count, failed_files
+            return await self._sequential_rename(files_to_rename)
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Rename files using Ollama.")
-    parser.add_argument("directory", nargs="?", default=os.getcwd(),
-                        help="Directory containing files to rename (defaults to current directory)")
-    parser.add_argument("-p", "--parallel", type=int, default=0,
-                        help="Number of parallel rename operations (default: sequential)")
+    parser = argparse.ArgumentParser(description="Interactive File Renaming Tool")
+    parser.add_argument("-a", "--auto", action="store_true",
+                        help="Run in auto mode without interactive prompts")
+    parser.add_argument("-d", "--directory",
+                        help="Specify directory non-interactively")
+    parser.add_argument('-m', '--model', help='Specify the Ollama model')
+    parser.add_argument('-c', '--context', type=int, help='Specify the context length')
+    parser.add_argument('--prefix', help="Specify the file prefix")
+    parser.add_argument('--ext', help="Specify the file extension")
+    parser.add_argument('-p', '--parallel', type=int, default=0,
+                        help='Number of parallel rename operations (default: sequential)')
     args = parser.parse_args()
 
-    directory = args.directory
-
-    if not os.path.isdir(directory):
-        logger.error(f"Error: Directory '{directory}' not found.")
-        return
-
-    # Collect files to rename
-    files_to_rename = await collect_files_to_rename(directory)
-
-    if not files_to_rename:
-        logger.info("No files found to rename.")
-        return
-
-    logger.info(f"Found {len(files_to_rename)} files to rename")
-
-    # Choose rename method
-    if args.parallel > 0:
-        logger.info(f"Running in parallel mode with {args.parallel} concurrent tasks")
-        renamed_count, failed_count, failed_files = await parallel_rename(
-            files_to_rename, directory, args.parallel
+    try:
+        renamer = InteractiveFileRenamer(
+            base_dir=args.directory,
+            auto_mode=args.auto,
+            model_name=args.model,
+            context_length=args.context,
+            filename_prefix=args.prefix,
+            filename_extension=args.ext,
         )
-    else:
-        logger.info("Running in sequential mode")
-        renamed_count, failed_count, failed_files = await sequential_rename(
-            files_to_rename, directory
-        )
+        renamer.interactive_configuration()
 
-    # Final summary
-    logger.info("\n--- Renaming Operation Summary ---")
-    logger.info(f"Total files processed: {len(files_to_rename)}")
-    logger.info(f"Successfully renamed: {renamed_count}")
-    logger.info(f"Failed to rename: {failed_count}")
+        try:
+            renamed_count, failed_count, failed_files = await renamer.rename_files(args.parallel)
+            print("\n--- Renaming Operation Summary ---")
+            print(f"Total files processed: {renamed_count + failed_count}")
+            print(f"Successfully renamed: {renamed_count}")
+            print(f"Failed to rename: {failed_count}")
+            if failed_files:
+                print("\nFiles that failed to rename:")
+                for file, error in failed_files:
+                    print(f"  - {file}: {error}")
 
-    if failed_files:
-        logger.warning("\nFiles that failed to rename:")
-        for file, error in failed_files:
-            logger.warning(f"  - {file}: {error}")
+        except KeyboardInterrupt:
+            print("\nOperation interrupted by user.")
+        except Exception as e:
+            if "ollama" in str(e).lower():
+                logger.critical(f"A fatal error occurred during model interaction: {e}. Aborting.")
+                sys.exit(1)
+            else:
+                logger.error(f"An unexpected error occurred: {e}")
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}")
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.warning("\nOperation interrupted by user.")
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
+    asyncio.run(main())
