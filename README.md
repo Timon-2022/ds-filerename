@@ -57,6 +57,19 @@ python rename_files.py -a -d "your_folder" --prefix "new" --ext ".txt"
 python rename_files.py -d "your_folder" -p 4
 ```
 
+Here's a breakdown of all the available options:
+
+| Option         | Short Option | Description                                                                                               |
+|-----------------|-------------|-----------------------------------------------------------------------------------------------------------|
+| `--auto`       | `-a`        | Run in auto mode without interactive prompts. Requires `-d`, `--prefix`, and `--ext` to be specified.     |
+| `--directory`  | `-d`        | Specify the directory containing the files to rename.                                                     |
+| `--model`      | `-m`        | Specify the Ollama model to use from local ollama list.                                                   |
+| `--context`    | `-c`        | Specify the context length (number of characters) to send to the model based on model.                    |
+| `--prefix`     |             | Specify the file prefix to match. Used with `--ext` to define the file pattern.                           |
+| `--ext`        |             | Specify the file extension to match (including the dot). Used with `--prefix` to define the file pattern. |
+| `--parallel`  | `-p`        | Number of parallel rename operations.  0 (default) means sequential processing.                           |
+
+
 ## 🤔 How It Works
 
 1. Try to run `python rename_files.py`, answer the questions!
