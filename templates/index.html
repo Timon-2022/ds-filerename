@@ -1,27 +1,168 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Renamer</title>
+    <title>DeepSeek 智能文件重命名工具</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div id="app">
-        <h1>File Renamer</h1>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-robot"></i> DeepSeek 智能文件重命名工具</h1>
+            <p>基于人工智能的文件内容分析与智能重命名</p>
+            <div class="author-info">
+                <i class="fas fa-user"></i> 作者：Timon
+            </div>
+        </header>
 
-        <input type="text" id="directory" placeholder="Enter directory path">
-        <button id="choose-dir-btn">Choose Directory</button> <button id="set-dir-btn">Set Directory</button>
+        <div class="main-content">
+            <!-- 配置面板 -->
+            <div class="panel config-panel">
+                <h2><i class="fas fa-cog"></i> 配置设置</h2>
+                
+                <!-- API 密钥设置 -->
+                <div class="config-section">
+                    <h3><i class="fas fa-key"></i> DeepSeek API 配置</h3>
+                    <div class="input-group">
+                        <input type="password" id="api-key" placeholder="请输入 DeepSeek API 密钥">
+                        <button id="set-api-key-btn" class="btn btn-primary">
+                            <i class="fas fa-check"></i> 设置密钥
+                        </button>
+                    </div>
+                    <div class="api-status" id="api-status">
+                        <i class="fas fa-exclamation-circle"></i> 请设置 API 密钥
+                    </div>
+                </div>
 
-        <div id="patterns"></div>
-        <button id="rename-btn">Rename Files</button>
-        <div id="results"></div>
+                <!-- 目录选择 -->
+                <div class="config-section">
+                    <h3><i class="fas fa-folder"></i> 工作目录</h3>
+                    <div class="input-group">
+                        <input type="text" id="directory" placeholder="选择要处理的文件夹">
+                        <button id="choose-dir-btn" class="btn btn-secondary">
+                            <i class="fas fa-folder-open"></i> 选择目录
+                        </button>
+                    </div>
+                    <div class="directory-status" id="directory-status">
+                        <i class="fas fa-info-circle"></i> 请选择工作目录
+                    </div>
+                </div>
+
+                <!-- 重命名配置 -->
+                <div class="config-section">
+                    <h3><i class="fas fa-sliders-h"></i> 重命名配置</h3>
+                    
+                    <div class="config-row">
+                        <label for="analysis-type">分析类型：</label>
+                        <select id="analysis-type">
+                            <option value="summary">内容摘要</option>
+                            <option value="keywords">关键词提取</option>
+                            <option value="topic">主题识别</option>
+                        </select>
+                    </div>
+
+                    <div class="config-row">
+                        <label for="naming-strategy">命名策略：</label>
+                        <select id="naming-strategy">
+                            <option value="ai_suggestion">AI 建议</option>
+                            <option value="keywords_only">仅关键词</option>
+                            <option value="topic_date">主题+日期</option>
+                        </select>
+                    </div>
+
+                    <div class="config-row">
+                        <label for="custom-prefix">自定义前缀：</label>
+                        <input type="text" id="custom-prefix" placeholder="可选">
+                    </div>
+
+                    <div class="config-row">
+                        <label for="custom-suffix">自定义后缀：</label>
+                        <input type="text" id="custom-suffix" placeholder="可选">
+                    </div>
+
+                    <div class="config-row">
+                        <label>
+                            <input type="checkbox" id="add-date"> 添加日期
+                        </label>
+                    </div>
+
+                    <div class="config-row">
+                        <label>
+                            <input type="checkbox" id="backup-enabled" checked> 启用备份
+                        </label>
+                    </div>
+
+                    <button id="save-config-btn" class="btn btn-primary">
+                        <i class="fas fa-save"></i> 保存配置
+                    </button>
+                </div>
+            </div>
+
+            <!-- 文件列表面板 -->
+            <div class="panel files-panel">
+                <h2><i class="fas fa-files-o"></i> 文件扫描</h2>
+                
+                <div class="scan-controls">
+                    <button id="scan-files-btn" class="btn btn-secondary" disabled>
+                        <i class="fas fa-search"></i> 扫描文件
+                    </button>
+                    <div class="scan-stats" id="scan-stats"></div>
+                </div>
+
+                <div class="files-container" id="files-container">
+                    <div class="empty-state">
+                        <i class="fas fa-folder-open"></i>
+                        <p>请先配置 API 密钥和工作目录，然后扫描文件</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 重命名预览面板 -->
+            <div class="panel preview-panel">
+                <h2><i class="fas fa-eye"></i> 重命名预览</h2>
+                
+                <div class="preview-controls">
+                    <button id="preview-btn" class="btn btn-primary" disabled>
+                        <i class="fas fa-magic"></i> 预览重命名
+                    </button>
+                    <button id="execute-btn" class="btn btn-success" disabled>
+                        <i class="fas fa-play"></i> 执行重命名
+                    </button>
+                </div>
+
+                <div class="preview-container" id="preview-container">
+                    <div class="empty-state">
+                        <i class="fas fa-magic"></i>
+                        <p>点击"预览重命名"查看 AI 分析结果</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 结果面板 -->
+            <div class="panel results-panel" id="results-panel" style="display: none;">
+                <h2><i class="fas fa-chart-bar"></i> 执行结果</h2>
+                <div class="results-container" id="results-container"></div>
+            </div>
+        </div>
+
+        <!-- 加载状态 -->
+        <div class="loading-overlay" id="loading-overlay" style="display: none;">
+            <div class="loading-spinner">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p id="loading-text">正在处理...</p>
+            </div>
+        </div>
+
+        <!-- 消息提示 -->
+        <div class="toast-container" id="toast-container"></div>
     </div>
+
     <script>
-    window.addEventListener('pywebviewready', () => {  // Use pywebviewready
-      console.log("pywebview is ready!"); // Log to console when ready
-      // Now you can safely call pywebview.api functions
-    });
+        window.addEventListener('pywebviewready', () => {
+            console.log("pywebview is ready!");
+        });
     </script>
     <script src="/static/script.js"></script>
 </body>

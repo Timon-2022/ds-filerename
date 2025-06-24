@@ -1,0 +1,48 @@
+{
+  "project": {
+    "name": "DeepSeek智能文件重命名工具",
+    "version": "1.0.0",
+    "author": "Timon",
+    "description": "基于DeepSeek API的智能文件重命名工具，支持多种文件格式的内容分析和智能重命名"
+  },
+  "environment": {
+    "python_version": ">=3.8",
+    "required_python_path": "C:\\Program Files\\Python311\\python.exe",
+    "dependencies": {
+      "flask": ">=2.0.0",
+      "requests": ">=2.25.0",
+      "python-docx": ">=0.8.11",
+      "PyPDF2": ">=3.0.0",
+      "openpyxl": ">=3.0.0",
+      "python-pptx": ">=0.6.21"
+    }
+  },
+  "api": {
+    "deepseek_base_url": "https://api.deepseek.com/v1/chat/completions",
+    "default_model": "deepseek-chat",
+    "timeout": 30,
+    "max_retries": 3
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 5000,
+    "debug": false
+  },
+  "file_processing": {
+    "supported_formats": [".txt", ".md", ".doc", ".docx", ".pdf", ".xlsx", ".xls", ".pptx", ".ppt"],
+    "max_file_size_mb": 50,
+    "max_filename_length": 100,
+    "backup_enabled": true,
+    "exclude_patterns": [".*", "_*", "~*", "*.tmp"]
+  },
+  "ui": {
+    "language": "zh-CN",
+    "theme": "modern",
+    "auto_open_browser": true
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(levelname)s - %(message)s",
+    "file_prefix": "rename_log"
+  }
+} 
