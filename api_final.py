@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, request, render_template
-from rename_files import DeepSeekFileRenamer
+from rename_files_final import DeepSeekFileRenamer
 from pathlib import Path
 import asyncio
 import logging
@@ -226,47 +226,53 @@ def create_app():
 
     @app.route('/choose_directory', methods=['POST'])
     def choose_directory():
-        """选择目录的API端点"""
+        """选择目录的 API 端点
+
+        在 macOS 上优先调用 AppleScript 的 `choose folder` 原生对话框，
+        避免 Tk 必须在主线程执行而导致的崩溃。
+        其它平台 (Windows / Linux) 仍回退到 Tk 对话框。
+        若都不可用，则返回失败信息，由前端提示用户手动输入。"""
+
+        import sys, subprocess, platform
+
         try:
-            import tkinter as tk
-            from tkinter import filedialog
-            
-            # 创建隐藏的根窗口
-            root = tk.Tk()
-            root.withdraw()  # 隐藏主窗口
-            root.attributes('-topmost', True)  # 确保对话框在最前面
-            
-            # 打开文件夹选择对话框
-            directory = filedialog.askdirectory(
-                title="选择要处理的文件夹",
-                initialdir="C:\\"
-            )
-            
-            root.destroy()  # 销毁根窗口
-            
+            directory = ""
+
+            if sys.platform == "darwin":  # macOS 使用 AppleScript
+                try:
+                    script = ('set _dir to POSIX path of (choose folder with prompt "选择要处理的文件夹")\n'
+                              'return _dir')
+                    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        directory = result.stdout.strip()
+                except Exception as e:
+                    logger.warning(f"AppleScript 选择目录失败: {e}")
+
+            # 若 AppleScript 未选中，且当前并非 macOS，使用 Tk 对话框
+            if not directory and sys.platform != "darwin":
+                try:
+                    import tkinter as tk
+                    from tkinter import filedialog
+
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.attributes('-topmost', True)
+                    directory = filedialog.askdirectory(title="选择要处理的文件夹")
+                    try:
+                        root.destroy()
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning(f"Tk 选择目录失败: {e}")
+
             if directory:
-                return jsonify({
-                    "success": True,
-                    "directory": directory,
-                    "message": "目录选择成功"
-                })
+                return jsonify({"success": True, "directory": directory})
             else:
-                return jsonify({
-                    "success": False,
-                    "message": "用户取消了目录选择"
-                }), 400
-                
-        except ImportError:
-            return jsonify({
-                "success": False,
-                "error": "系统不支持图形界面目录选择，请手动输入路径"
-            }), 400
+                return jsonify({"success": False, "message": "未选择目录"})
+
         except Exception as e:
-            logger.error(f"目录选择失败: {str(e)}")
-            return jsonify({
-                "success": False,
-                "error": f"目录选择失败: {str(e)}"
-            }), 500
+            logger.error(f"选择目录失败: {str(e)}")
+            return jsonify({"success": False, "error": str(e)})
 
     @app.route('/get_config', methods=['GET'])
     def get_config():

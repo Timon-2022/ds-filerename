@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional, Union
 import logging
 
-from deepseek_client import DeepSeekClient
-from file_extractor import FileContentExtractor
+from deepseek_client_final import DeepSeekClient
+from file_extractor_final import FileContentExtractor
 
 logging.basicConfig(
     level=logging.INFO,
